@@ -18,6 +18,7 @@ Everything is designed to be **generalized**: set `$VAULT_ROOT` and `$LLAMA_URL`
 | **[session-export/](session-export/)** | Export Hermes sessions to structured vault notes. | ✅ Core |
 | **[inbox-triage/](inbox-triage/)** | Compress raw exports, age out stale inbox items, enforce inbox discipline. | ✅ Core |
 | **[local-llm/](local-llm/)** | CLI tool to manage local LLM services (start, stop, switch models). | ✅ Core |
+| **[self-audit/](self-audit/)** | Skill that audits and cleans Hermes internal state — memory, sessions, cron, disk cruft. Run when the agent starts behaving erratically. | ✅ Core |
 | **[custodian/](custodian/)** | Optional vault wanderer — cross-domain discovery, drift detection, lint walks. | ❌ Optional |
 | **[cron/jobs.json](cron/jobs.json)** | Reference config showing how to wire everything up. | 📋 Reference |
 
