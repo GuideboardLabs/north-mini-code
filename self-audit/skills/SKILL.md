@@ -35,9 +35,16 @@ cronjob action=list
 # Config
 read_file ~/.hermes/config.yaml
 
-# Session DB stats
-sqlite3 ~/.hermes/state.db "SELECT count(*) as total, sum(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) as active FROM sessions;"
-sqlite3 ~/.hermes/state.db "SELECT model, count(*) FROM sessions WHERE ended_at IS NULL GROUP BY model;"
+# Session DB stats (Python — the sqlite3 CLI is not installed everywhere)
+python3 - <<'EOF'
+import sqlite3
+from pathlib import Path
+conn = sqlite3.connect(str(Path.home() / '.hermes' / 'state.db'))
+total, active = conn.execute("SELECT count(*), sum(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END) FROM sessions").fetchone()
+print(f"total={total}, active={active}")
+for row in conn.execute("SELECT model, count(*) FROM sessions WHERE ended_at IS NULL GROUP BY model"):
+    print(f"  {row[0]}: {row[1]}")
+EOF
 
 # Disk cruft
 ls ~/.hermes/memories/*.bak.* 2>/dev/null | wc -l
@@ -77,8 +84,12 @@ from pathlib import Path
 db = Path.home() / '.hermes' / 'state.db'
 conn = sqlite3.connect(str(db))
 cutoff = time.time() - (48 * 3600)
+cols = [r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+has_activity = 'last_activity_at' in cols
 before = conn.execute("SELECT count(*) FROM sessions WHERE ended_at IS NULL").fetchone()[0]
-conn.execute("UPDATE sessions SET ended_at = started_at + 3600 WHERE ended_at IS NULL AND started_at < ?", (cutoff,))
+# Prefer last_activity_at so no real session history is lost; fall back to started_at + 1h
+end_expr = "COALESCE(last_activity_at, started_at + 3600)" if has_activity else "started_at + 3600"
+conn.execute(f"UPDATE sessions SET ended_at = {end_expr} WHERE ended_at IS NULL AND started_at < ?", (cutoff,))
 conn.commit()
 after = conn.execute("SELECT count(*) FROM sessions WHERE ended_at IS NULL").fetchone()[0]
 conn.close()
@@ -153,7 +164,7 @@ Check `~/.hermes/scripts/hermes-session-export.py` for the stale-session-closing
 # Close stale sessions (older than 48h, still marked as active)
 stale_cutoff = datetime.now(tz=_NYTZ).timestamp() - (48 * 3600)
 conn.execute("""
-    UPDATE sessions SET ended_at = started_at + 3600
+    UPDATE sessions SET ended_at = COALESCE(last_activity_at, started_at + 3600)
     WHERE ended_at IS NULL AND started_at < ?
 """, (stale_cutoff,))
 stale_count = conn.execute("SELECT changes()").fetchone()[0]
@@ -166,7 +177,7 @@ conn.commit()
 
 After all cleanup, verify:
 
-1. Session DB: `SELECT count(*) FROM sessions WHERE ended_at IS NULL` should be <5 (only truly active sessions)
+1. Session DB: no stale sessions left — every session with `ended_at IS NULL` should have `started_at` within the last 48h. (Don't hard-require a count below 5: multi-channel setups can legitimately have several open sessions.)
 2. Memory files: no duplicate entries, no stale references, no contradictions
 3. Cron jobs: no erroring enabled jobs
 4. Disk: no orphaned output dirs, no .bak files
@@ -192,6 +203,7 @@ Export script: verified / fixed
 
 ## Pitfalls
 
+- **The `sqlite3` CLI is not installed everywhere.** Minimal containers and VMs often lack the command-line tool. Use Python's built-in `sqlite3` module instead — it ships with every Python install.
 - **Memory tool substring matching fails on large compound entries.** When the memory store has one giant entry containing many facts separated by blank lines, the `memory` tool's `replace` action can't match substrings within it. Use `patch` to edit the file directly in that case.
 - **jobs.json structure varies.** It can be a dict with a `jobs` key that's either a list or a dict keyed by job ID. Parse defensively.
 - **Cron jobs that need a local model will error when none is loaded.** If you run agents that connect to a local LLM (like the custodian component), all their modes will error when no model is running. Pause them, don't try to fix them — they'll work again when a model is loaded.
